@@ -3,6 +3,7 @@
 import std/sequtils
 import pkg/siwin
 import pkg/vulkan
+import pkg/chronicles
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -13,7 +14,7 @@ proc initGameWindow(): window.Window =
     applicationVersion = vkMakeVersion(0, 1, 0, 0),
     pEngineName = "Renderer",
     engineVersion = vkMakeVersion(0, 1, 0, 0),
-    apiVersion = vkApiVersion1_1
+    apiVersion = vkApiVersion1_3
   )
 
   let exts = getRequiredVulkanExtensions()
@@ -45,7 +46,7 @@ proc initGameWindow(): window.Window =
 
 let window = initGameWindow()
 let surface = cast[VkSurfaceKHR](window.vulkanSurface)
-echo "Vulkan initialized, surface: ", cast[uint64](surface)
+info "Vulkan initialized", vksurface = cast[uint64](surface)
 
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
