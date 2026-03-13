@@ -4,6 +4,7 @@ import std/sequtils
 import pkg/siwin
 import pkg/vulkan
 import pkg/chronicles
+import pkg/vmath
 
 type
   QueueFamilyIndices = object
@@ -24,6 +25,7 @@ type
     surface: VkSurfaceKHR
     device: VkDevice
     queue: VkQueue
+    swapchain: VkSwapchainKHR
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -67,6 +69,7 @@ proc initGameWindow(nariInstance): window.Window =
   
   vkInit(nariInstance.vkInstance)
   loadVK_KHR_surface()
+  loadVK_KHR_swapchain()
   # loadVK_KHR_swapchain_maintenance1()
 
   # it's incredible but we need to create a window bound to the vulkan instance
@@ -157,7 +160,7 @@ proc peekDevice(nariInstance) =
     queueCount: 1,
     pQueuePriorities: qfpriorities.addr)
   
-  const deviceExtensions = [cstring"VK_KHR_swapchain", "VK_KHR_swapchain_maintenance1"]
+  const deviceExtensions = [cstring"VK_KHR_swapchain"]
   
   var enabledVk10Features = VkPhysicalDeviceFeatures(
     samplerAnisotropy: VkBool32(1))
@@ -197,6 +200,40 @@ proc peekDevice(nariInstance) =
     0,
     nariInstance.queue.addr)
 
+proc createSwapchain(nariInstance; w, h: int) =
+  var surfaceCaps = default(VkSurfaceCapabilitiesKHR)
+  if vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+    nariInstance.devices[nariInstance.deviceId],
+    nariInstance.surface,
+    surfaceCaps.addr) != VKSuccess: quit("Get surface caps error")
+
+  let imageFormat = VK_FORMAT_B8G8R8A8_SRGB
+  var swapchainCi = VkSwapchainCreateInfoKHR(
+    sType: SwapchainCreateInfoKHR,
+    surface: nariInstance.surface,
+    minImageCount: surfaceCaps.minImageCount,
+    imageFormat: imageFormat,
+    imageColorSpace: VK_COLORSPACE_SRGB_NONLINEAR_KHR,
+    imageExtent: VkExtent2D(
+      width: w.uint32,
+      height: h.uint32), # XXX: we can't use surfaceCaps.currentExtend due to siwin issue
+    imageArrayLayers: 1,
+    imageUsage: cast[VkImageUsageFlags](VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT),
+    preTransform: VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+    compositeAlpha: VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+    presentMode: VK_PRESENT_MODE_FIFO_KHR
+  )
+
+  if vkCreateSwapchainKHR(
+    nariInstance.device, swapchainCi.addr,
+    nil, nariInstance.swapchain.addr) != VKSuccess: quit("Can't create swapchain")
+  
+  info  "Created swapchain",
+        format = swapchainCi.imageFormat,
+        extent = [swapchainCi.imageExtent.width, swapchainCi.imageExtent.height],
+        images = swapchainCi.minImageCount,
+        p = cast[uint32](nariInstance.swapchain)
+
 
 var nari = NariInstance()
 let window = initGameWindow(nari)
@@ -209,7 +246,7 @@ nari.peekDevice()
 
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
-    discard,
+    nari.createSwapchain(e.size.x, e.size.y),
   onRender: proc(e: RenderEvent) =
     discard,
   onKey: proc(e: KeyEvent) =
