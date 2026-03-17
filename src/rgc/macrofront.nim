@@ -111,7 +111,7 @@ proc parseStmt(b: var IrBuilder, n: NimNode) =
   of nnkCall: parseCall(b, n)
   else: discard
 
-macro pass(signature: untyped, code: untyped) =
+macro pass*(signature: untyped, code: untyped) =
   var b = openBuilder()
   var stmts = IrBuilder(dest: openBuilder(), currentScopeKind: Toplevel)
 
@@ -129,7 +129,7 @@ macro pass(signature: untyped, code: untyped) =
   # echo treeRepr(code)
   mcRgirCode.add newStrLitNode(b.extract())
 
-macro module(signature: untyped, code: untyped) =
+macro module*(signature: untyped, code: untyped) =
   var b = openBuilder()
   
   b.withTree "module":
@@ -139,7 +139,7 @@ macro module(signature: untyped, code: untyped) =
   # echo b.extract()
   mcRgirCode.add newStrLitNode(b.extract())
 
-macro initGraph(name: untyped) =
+macro initGraph*(name: untyped) =
   var lit = createLiterals()
   var buf = createTokenBufVm()
   var rgir = ""
