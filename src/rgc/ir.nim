@@ -408,6 +408,23 @@ proc extract*(b: sink Builder): string =
   assert b.nesting == 0, "unpaired parens: " & $b.nesting
   move b.buf
 
+proc addBuilder*(b: var Builder; other: sink Builder) =
+  let fragment = extract(other)
+  if fragment.len == 0:
+    return
+  if b.nesting == 0:
+    b.buf.add fragment
+    return
+
+  b.buf.add '\n'
+  for i in 1..b.nesting:
+    b.buf.add ' '
+  for c in fragment:
+    b.buf.add c
+    if c == '\n':
+      for i in 1..b.nesting:
+        b.buf.add ' '
+
 proc addSep(b: var Builder) =
   if b.buf.len > 0 and b.buf[^1] notin {'\n', ' '} and b.nesting != 0:
     b.buf.add ' '
