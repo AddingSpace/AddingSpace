@@ -5,6 +5,7 @@ import pkg/siwin
 import pkg/vulkan
 import pkg/chronicles
 import pkg/vmath
+import pkg/gallonim
 
 type
   QueueFamilyIndices = object
@@ -26,6 +27,7 @@ type
     device: VkDevice
     queue: VkQueue
     swapchain: VkSwapchainKHR
+    allocator: PassthroughGpuAllocator[VulkanAllocModel] # TODO: implement freelist allocator etc.
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -243,6 +245,11 @@ info "Vulkan initialized", vksurface = cast[uint64](surface)
 nari.findDevices()
 nari.findQueueFamilyIndices()
 nari.peekDevice()
+
+nari.allocator = PassthroughGpuAllocator[VulkanAllocModel].init(
+  VulkanAllocModel.init(nari.device, nari.devices[nari.deviceId]))
+
+info "Gallonim Passthrough GPU allocator initialized"
 
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
