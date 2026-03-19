@@ -1,6 +1,6 @@
 import ir, bitabs, lineinfos
 import tagmodel/model
-import std/tables
+import std/[tables, strutils]
 
 type
   NodeKind = enum
@@ -47,10 +47,17 @@ type
     currentPassKind: string # Currently I don't care about scopes
     exported*: Table[SymId, FileId] # exported node to it's file
     currentPhase*: Phase
+    toplevelScope: seq[(string, SymId)]
 
 proc passNode(s: SymId): Node = Node(kind: Pass, s: s)
 proc moduleNode(s: SymId): Node = Node(kind: Module, s: s)
 proc resourceNode(s: SymId): Node = Node(kind: Resource, s: s)
+
+proc lookupSym(c: SemContext, name: string): SymId =
+  for (n, sym) in c.toplevelScope:
+    if cmpIgnoreStyle(n, name) == 0:
+      return sym
+  raiseAssert "Undefined: " & name
 
 proc skipParRi*(n: var Cursor) =
   assert n.kind == ParRi
@@ -78,6 +85,8 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
   of PassS:
     c.take n # (pass
     c.currentNode = passNode(n.symId)
+    if c.currentPhase == SymbolResolution:
+      c.toplevelScope.add (c.lit.syms[n.symId], n.symId)
     c.take n # :name
     assert n.kind == DotToken # dyn pass is not supported
     c.take n # .
@@ -91,6 +100,8 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
   of ModuleS:
     c.take n # (module
     c.currentNode = moduleNode(n.symId)
+    if c.currentPhase == SymbolResolution:
+      c.toplevelScope.add (c.lit.syms[n.symId], n.symId)
     c.take n # :name
     c.take n # dyn
     c.take n # pub
@@ -131,7 +142,13 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
   of ShaderS:
     c.takeSkip n
   of UseS:
-    c.takeSkip n
+    c.take n # (use
+    case c.currentPhase
+    of SymbolResolution:
+      c.dest.add symToken(c.lookupSym(c.lit.strings[n.litId]))
+    of GraphGeneration: discard
+    inc n
+    c.takeParRi n
   of NoStmt: raiseAssert "Invalid statement"
   else: raiseAssert "Unsupported statement"
 
