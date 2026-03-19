@@ -44,7 +44,6 @@ type
     # node(resource) Image1:
     #   <- node(pass) Render2
     currentNode: Node
-    currentPassKind: string # Currently I don't care about scopes
     exported*: Table[SymId, FileId] # exported node to it's file
     currentPhase*: Phase
     toplevelScope: seq[(string, SymId)]
@@ -93,7 +92,6 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
     if n.kind == Ident and c.lit.strings[n.litId] == "pub":
       c.exported[c.currentNode.s] = FileId(0) # dummy file currently. TODO: implement
     c.take n # pub
-    c.currentPassKind = c.lit.strings[n.litID]
     c.take n # passKind
     semStmt c, n
     c.takeParRi n
