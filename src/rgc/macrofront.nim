@@ -150,15 +150,13 @@ macro initGraph*(name: untyped) =
   buf.addParRi() # end of stmts
   when defined(rgc.dumpParsedRgir):
     echo beginRead(buf).toString(lit)
-  
-  
 
   var sem = SemContext[true](lit: lit)
   semcheck(sem, beginRead(buf))
 
 
 when isMainModule:
-  pass dyn pub mypass:
+  pass pub mypass:
     input  src: Image[RGBA16F]
     output dst: Image[RGBA16F]
 
