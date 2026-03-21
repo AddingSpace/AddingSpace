@@ -14,6 +14,8 @@ type
     ComputeTagId
     CopyTagId
     ShaderTagId
+    ImageTagId
+    BufferTagId
 
 const
   TagData*: array[TagEnum, (string, int)] = [
@@ -28,5 +30,7 @@ const
     ("raster", 8),
     ("compute", 9),
     ("copy", 10),
-    ("shader", 11)
+    ("shader", 11),
+    ("image", 12),
+    ("buffer", 13)
   ]

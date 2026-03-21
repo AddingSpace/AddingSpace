@@ -8,10 +8,12 @@ proc toNimName(s: string; suffix: string): string =
 type
   EnumList = enum
     RgcStmt
+    RgcType
 
 proc toSuffix(e: EnumList): (string, string) =
   case e
   of RgcStmt: ("S", "NoStmt")
+  of RgcType: ("T", "NoType")
 
 proc shortcutToEnumList(shortcut: string): EnumList =
   try:

@@ -52,11 +52,10 @@ proc parseCommand(b: var IrBuilder, n: NimNode) =
 
       case s[0].kind
       of nnkBracketExpr:
-        b.dest.addIdent s[0][0].strVal
-        b.dest.addIdent s[0][1].strVal # TODO: in fact it can be some tree...
+        b.dest.withTree s[0][0].strVal:
+          b.dest.addIdent s[0][1].strVal # TODO: in fact it can be some tree...
       of nnkIdent:
         b.dest.addIdent s[0].strVal
-        b.dest.addEmpty()
       else: raiseAssert "Unsupported node kind in input/output command"
   of "shader":
     assert b.scopeDepth > 0

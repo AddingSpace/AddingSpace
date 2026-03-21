@@ -22,3 +22,13 @@ proc stmtKind*(c: PackedToken): RgcStmt {.inline.} =
 
 proc stmtKind*(c: Cursor): RgcStmt {.inline.} =
   result = stmtKind(c.load())
+
+proc typeKind*(c: PackedToken): RgcType {.inline.} =
+  let e = tagEnum(c)
+  if c.kind == ParLe and rawTagIsRgcType(e):
+    result = cast[RgcType](e)
+  else:
+    result = NoType
+
+proc typeKind*(c: Cursor): RgcType {.inline.} =
+  result = typeKind(c.load())

@@ -1,6 +1,6 @@
-import ir, bitabs, lineinfos
+import ir, bitabs, lineinfos, types
 import tagmodel/model
-import std/[tables, strutils]
+import std/[tables, deques, strutils]
 
 type
   NodeKind = enum
@@ -19,8 +19,10 @@ type
   SemContext*[Vm: static bool] = object
     when Vm:
       dest*: VmTokenBuf
+      types: VmKnownTypes
     else:
       dest*: RtTokenBuf
+      types: RtKnownTypes
 
     lit*: Literals
 
@@ -47,6 +49,7 @@ type
     exported*: Table[SymId, FileId] # exported node to it's file
     currentPhase*: Phase
     toplevelScope: seq[(string, SymId)]
+    nodes: Table[SymId, Node]
 
 proc passNode(s: SymId): Node = Node(kind: Pass, s: s)
 proc moduleNode(s: SymId): Node = Node(kind: Module, s: s)
@@ -86,6 +89,7 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
     c.currentNode = passNode(n.symId)
     if c.currentPhase == SymbolResolution:
       c.toplevelScope.add (c.lit.syms[n.symId], n.symId)
+      c.nodes[n.symId] = c.currentNode
     c.take n # :name
     assert n.kind == DotToken # dyn pass is not supported
     c.take n # .
@@ -100,6 +104,7 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
     c.currentNode = moduleNode(n.symId)
     if c.currentPhase == SymbolResolution:
       c.toplevelScope.add (c.lit.syms[n.symId], n.symId)
+      c.nodes[n.symId] = c.currentNode
     c.take n # :name
     c.take n # dyn
     c.take n # pub
@@ -120,9 +125,9 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
       inc n
     of GraphGeneration:
       c.graph.mgetOrPut(c.currentNode, @[]).add resourceNode(n.symId)
-      inc n
-    c.take n # type
-    c.take n # typeParam
+      c.nodes[n.symId] = resourceNode(n.symId)
+      c.take n
+    c.takeSkip n # type
     c.takeParRi n
   of OutputS:
     c.take n # (output
@@ -133,19 +138,31 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
       inc n
     of GraphGeneration:
       c.graph.mgetOrPut(resourceNode(n.symId), @[]).add c.currentNode
-      inc n
-    c.take n # type
-    c.take n # typeParam
+      c.take n
+    c.takeSkip n # type
     c.takeParRi n
   of ShaderS:
-    c.takeSkip n
+    # shader depends on pass
+    c.take n # (shader
+    c.take n # type: render/compute
+    case c.currentPhase
+    of SymbolResolution:
+      let sym = c.lit.syms.getOrIncl(c.lit.strings[n.litId])
+      c.dest.add symdefToken(sym)
+      inc n
+    of GraphGeneration:
+      c.graph.mgetOrPut(resourceNode(n.symId), @[]).add c.currentNode
+      c.take n
+    c.takeParRi n
   of UseS:
     c.take n # (use
     case c.currentPhase
     of SymbolResolution:
       c.dest.add symToken(c.lookupSym(c.lit.strings[n.litId]))
-    of GraphGeneration: discard
-    inc n
+      inc n
+    of GraphGeneration:
+      c.graph.mgetOrPut(c.currentNode, @[]).add c.nodes[n.symId]
+      c.take n
     c.takeParRi n
   of NoStmt: raiseAssert "Invalid statement"
   else: raiseAssert "Unsupported statement"
@@ -161,6 +178,38 @@ proc phasex*(c: var SemContext, phase: Phase, input: var TokenBuf): TokenBuf =
   semStmt c, cursor
   endRead(input)
   result = ensureMove c.dest
+
+proc topologicalSort(c: var SemContext): seq[Node] =
+  # uses Kahn's algorithm for topological sorting
+
+  var indegrees = initTable[Node, int]() # number of incoming nodes
+  var queue = initDeque[Node]()
+
+  for (owner, deps) in c.graph.pairs:
+    indegrees[owner] = 0 # indegrees should be defined for all nodes to sort
+    for dep in deps:
+      indegrees[dep] = 0
+
+  for (owner, deps) in c.graph.pairs:
+    for dep in deps:
+      inc indegrees[dep]
+
+  for (node, indegree) in indegrees.pairs:
+    if indegree == 0:
+      queue.addLast node
+
+  result = @[]
+  while queue.len > 0:
+    let u = queue.popFirst()
+    result.add u
+
+    for neighboor in c.graph.getOrDefault(u):
+      dec indegrees[neighboor]
+      if indegrees[neighboor] == 0:
+        queue.addLast neighboor
+
+  if len(result) != len(indegrees):
+    raiseAssert "cyclic type dependence detected"
 
 proc semcheck*(c: var SemContext, input: var TokenBuf) =
   var resolved = phasex(c, SymbolResolution, input)
@@ -180,3 +229,9 @@ proc semcheck*(c: var SemContext, input: var TokenBuf) =
     for i in v:
       s.add "\n  <- " & i.repr
     echo s
+  
+  echo ""
+  var sorted = c.topologicalSort()
+  echo "Sorted:"
+  for i in sorted:
+    echo i.repr

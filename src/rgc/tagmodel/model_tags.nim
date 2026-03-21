@@ -20,3 +20,12 @@ type
 proc rawTagIsRgcStmt*(raw: TagEnum): bool {.inline.} =
   raw >= PassTagId and raw <= ShaderTagId
 
+type
+  RgcType* = enum
+    NoType
+    ImageT = (ord(ImageTagId), "image")  ## image resource, T is generic param, actually mostly hides imageViews, maybe it also need separated type
+    BufferT = (ord(BufferTagId), "buffer")  ## buffer resource of T
+
+proc rawTagIsRgcType*(raw: TagEnum): bool {.inline.} =
+  raw >= ImageTagId and raw <= BufferTagId
+
