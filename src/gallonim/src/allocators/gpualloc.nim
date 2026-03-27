@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 type
   MemoryLocation* = enum
     Unknown
@@ -16,7 +17,7 @@ type
   AllocDesc* = object
     size*: uint64
     alignment*: uint64
-    memoryTypeBits*: uint32 = 0xFFFFFFFF
+    memoryTypeBits*: uint32 = 0xFFFFFFFF'u32
     ## VkMemoryRequirements.memoryTypeBits
     ## Used by Vulkan backend; other backends ignore.
     location*: MemoryLocation
