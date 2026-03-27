@@ -402,7 +402,7 @@ proc makeBuffers(nariInstance) =
     size: memReq.size.uint64,
     alignment: memReq.alignment.uint64,
     memoryTypeBits: memReq.memoryTypeBits,
-    location: GpuOnly,
+    location: CpuToGpu,
     linear: true,
   ))
 
@@ -412,6 +412,10 @@ proc makeBuffers(nariInstance) =
     cast[VkDeviceMemory](alloc.handle),
     VkDeviceSize(alloc.offset)
   ) != VkSuccess: quit("Can't bind vertex/index buffer memory")
+
+  let indicesStart = cast[pointer](cast[uint](alloc.mappedPtr) + uint(vBufSize))
+  copyMem(alloc.mappedPtr, vertices[0].addr, vBufSize)
+  copyMem(indicesStart, indices[0].addr, iBufSize)
 
   info "vertex/index buffer created"
 
@@ -426,4 +430,3 @@ run window, WindowEventsHandler(
   onKey: proc(e: KeyEvent) =
     if e.pressed and e.key == Key.escape:
       close e.window)
-
