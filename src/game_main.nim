@@ -27,6 +27,8 @@ type
     device: VkDevice
     queue: VkQueue
     swapchain: VkSwapchainKHR
+    swapchainImages: seq[VkImage]
+    swapchainImageViews: seq[VkImageView]
     allocator: PassthroughGpuAllocator[VulkanAllocModel] # TODO: implement freelist allocator etc.
 
     # Until render graph integration:
@@ -214,10 +216,15 @@ proc createSwapchain(nariInstance; w, h: int) =
     nariInstance.surface,
     surfaceCaps.addr) != VKSuccess: quit("Get surface caps error")
 
+  for imageView in nariInstance.swapchainImageViews:
+    vkDestroyImageView(nariInstance.device, imageView, nil)
+  nariInstance.swapchainImageViews.shrink(0)
+
   let imageFormat = VK_FORMAT_B8G8R8A8_SRGB
   var swapchainCi = VkSwapchainCreateInfoKHR(
     sType: SwapchainCreateInfoKHR,
     surface: nariInstance.surface,
+    oldSwapchain: nariInstance.swapchain,
     minImageCount: surfaceCaps.minImageCount,
     imageFormat: imageFormat,
     imageColorSpace: VK_COLORSPACE_SRGB_NONLINEAR_KHR,
@@ -234,11 +241,51 @@ proc createSwapchain(nariInstance; w, h: int) =
   if vkCreateSwapchainKHR(
     nariInstance.device, swapchainCi.addr,
     nil, nariInstance.swapchain.addr) != VKSuccess: quit("Can't create swapchain")
+
+  var imageCount = 0'u32
+  if vkGetSwapchainImagesKHR(
+    nariInstance.device,
+    nariInstance.swapchain,
+    imageCount.addr,
+    nil
+  ) != VKSuccess: quit("Can't get swapchain image count")
+  nariInstance.swapchainImages = newSeq[VkImage](imageCount.int)
+
+  if vkGetSwapchainImagesKHR(
+    nariInstance.device,
+    nariInstance.swapchain,
+    imageCount.addr,
+    nariInstance.swapchainImages[0].addr
+  ) != VKSuccess: quit("Can't get swapchain images")
+  nariInstance.swapchainImageViews = newSeq[VkImageView](imageCount.int)
+
+  for i in 0 ..< imageCount.int:
+    var imageViewCi = VkImageViewCreateInfo(
+      sType: ImageViewCreateInfo,
+      image: nariInstance.swapchainImages[i],
+      viewType: VK_IMAGE_VIEW_TYPE_2D,
+      format: imageFormat,
+      subresourceRange: VkImageSubresourceRange(
+        aspectMask: VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+        levelCount: 1,
+        layerCount: 1
+      )
+    )
+
+    if vkCreateImageView(
+      nariInstance.device,
+      imageViewCi.addr,
+      nil,
+      nariInstance.swapchainImageViews[i].addr
+    ) != VKSuccess: quit("Can't create swapchain image view")
+
+  if swapchainCi.oldSwapchain != VkSwapchainKHR(0):
+    vkDestroySwapchainKHR(nariInstance.device, swapchainCi.oldSwapchain, nil)
   
   info  "Created swapchain",
         format = swapchainCi.imageFormat,
         extent = [swapchainCi.imageExtent.width, swapchainCi.imageExtent.height],
-        images = swapchainCi.minImageCount,
+        images = imageCount,
         p = cast[uint32](nariInstance.swapchain)
 
 
