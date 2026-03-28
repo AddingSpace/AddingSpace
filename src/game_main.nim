@@ -425,7 +425,7 @@ proc configureDepth(nariInstance; w, h: int) =
     depthViewCI.addr, nil,
     nariInstance.depthImageView.addr) != VkSuccess: quit("Can't create depth image view")
   
-  info "depth attachment created"
+  info "Depth attachment created"
 
 # 3D rendering:
 
@@ -497,7 +497,7 @@ proc makeBuffers(nariInstance) =
   copyMem(alloc.mappedPtr, vertices[0].addr, vBufSize)
   copyMem(indicesStart, indices[0].addr, iBufSize)
 
-  info "vertex/index buffer created"
+  info "Vertex/index buffer created"
 
 proc makeShaderDataBuffers(nariInstance) =
   for i in 0..<maxFramesInFlight:
@@ -542,7 +542,7 @@ proc makeShaderDataBuffers(nariInstance) =
     nariInstance.shaderDataAddresses[i] = vkGetBufferDeviceAddress(
       nariInstance.device, bdaInfo.addr)
 
-  info "shader data buffers created"
+  info "Shader data buffers created"
 
 proc createSemaphores(nariInstance) =
   var semaphoreCi = VkSemaphoreCreateInfo(
@@ -568,7 +568,7 @@ proc createSemaphores(nariInstance) =
       semaphore.addr
     ) != VkSuccess: quit("Can't create render semaphore")
 
-  info "semaphores and fences created"
+  info "Semaphores and fences created"
 
 proc allocCommandBuffers(nariInstance) =
   var commandPoolCI = VkCommandPoolCreateInfo(
@@ -591,7 +591,7 @@ proc allocCommandBuffers(nariInstance) =
     nariInstance.commandBuffers[0].addr
   ) != VkSuccess: quit("Can't allocate command buffers")
 
-  info "command buffers allocated"
+  info "Command buffers allocated"
 
 proc loadTextures(nariInstance) =
   let filename = "assets/uv_checker.ktx"
@@ -864,7 +864,7 @@ proc loadTextures(nariInstance) =
   )
   vkUpdateDescriptorSets(nariInstance.device, 1, writeDescSet.addr, 0, nil)
 
-  info "textures loaded"
+  info "Textures loaded"
 
 proc createPipeline(nariInstance) =
   let vertSpirv = readFile("src/shaders/shader.vert.spv")
@@ -997,7 +997,7 @@ proc createPipeline(nariInstance) =
     nariInstance.pipeline.addr
   ) != VkSuccess: quit("Can't create graphics pipeline")
 
-  info "graphics pipeline created"
+  info "Graphics pipeline created"
 
 var lastWindowSize = ivec2(0, 0)
 var camDist = -8.0'f32
