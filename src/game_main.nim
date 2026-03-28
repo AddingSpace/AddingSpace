@@ -1,6 +1,6 @@
 ## The module that launches the game
 
-import std/sequtils
+import std/[math, sequtils, sets, times]
 import pkg/siwin
 import pkg/vulkan
 import pkg/chronicles
@@ -71,6 +71,9 @@ type
     descriptorSetTex: VkDescriptorSet
     pipelineLayout: VkPipelineLayout
     pipeline: VkPipeline
+    frameIndex: uint32
+    indexCount: uint32
+    vertexBufferSize: VkDeviceSize
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -121,6 +124,7 @@ proc initGameWindow(nariInstance): window.Window =
   result = newVulkanWindow(
     siwinGlobals,
     cast[pointer](nariInstance.vkInstance),
+    frameless = true, # TODO: implement qowldecor to replace libdecor and allow frame...
     title = "Adding Space")
   
   nariInstance.surface = cast[VkSurfaceKHR](result.vulkanSurface)
@@ -431,46 +435,33 @@ type Vertex = object
   uv: Vec2
 
 proc makeBuffers(nariInstance) =
+  let s = 0.5'f32
+  var vertices: seq[Vertex] = @[]
+  var indices: seq[uint16] = @[]
 
-  let n = 0.57735026'f32
-  var vertices: seq[Vertex] = @[
-    Vertex(
-      pos: vec3(0.25'f32, 0.25'f32, 0.25'f32),
-      normal: vec3(n, n, n),
-      uv: vec2(1.0'f32, 1.0'f32)
-    ),
-    Vertex(
-      pos: vec3(-0.25'f32, -0.25'f32, 0.25'f32),
-      normal: vec3(-n, -n, n),
-      uv: vec2(0.0'f32, 1.0'f32)
-    ),
-    Vertex(
-      pos: vec3(-0.25'f32, 0.25'f32, -0.25'f32),
-      normal: vec3(-n, n, -n),
-      uv: vec2(0.0'f32, 0.0'f32)
-    ),
-    Vertex(
-      pos: vec3(0.25'f32, -0.25'f32, -0.25'f32),
-      normal: vec3(n, -n, -n),
-      uv: vec2(1.0'f32, 0.0'f32)
-    )
-  ]
-  var indices: seq[uint16] = @[
-    0'u16, 2'u16, 1'u16,
-    0'u16, 1'u16, 3'u16,
-    0'u16, 3'u16, 2'u16,
-    1'u16, 2'u16, 3'u16
-  ]
+  template addQuad(p0, p1, p2, p3: Vec3; n: Vec3) =
+    let base = uint16(vertices.len)
+    vertices.add Vertex(pos: p0, normal: n, uv: vec2(0, 1))
+    vertices.add Vertex(pos: p1, normal: n, uv: vec2(1, 1))
+    vertices.add Vertex(pos: p2, normal: n, uv: vec2(1, 0))
+    vertices.add Vertex(pos: p3, normal: n, uv: vec2(0, 0))
+    indices.add [base, base+1, base+2, base, base+2, base+3]
+
+  addQuad(vec3(-s,-s, s), vec3( s,-s, s), vec3( s, s, s), vec3(-s, s, s), vec3( 0, 0, 1)) # front
+  addQuad(vec3( s,-s,-s), vec3(-s,-s,-s), vec3(-s, s,-s), vec3( s, s,-s), vec3( 0, 0,-1)) # back
+  addQuad(vec3( s,-s, s), vec3( s,-s,-s), vec3( s, s,-s), vec3( s, s, s), vec3( 1, 0, 0)) # right
+  addQuad(vec3(-s,-s,-s), vec3(-s,-s, s), vec3(-s, s, s), vec3(-s, s,-s), vec3(-1, 0, 0)) # left
+  addQuad(vec3(-s, s, s), vec3( s, s, s), vec3( s, s,-s), vec3(-s, s,-s), vec3( 0, 1, 0)) # top
+  addQuad(vec3(-s,-s,-s), vec3( s,-s,-s), vec3( s,-s, s), vec3(-s,-s, s), vec3( 0,-1, 0)) # bottom
 
   var vBufSize = sizeof(Vertex) * vertices.len
   var iBufSize = sizeof(uint16) * indices.len # when it will work, try make sizeof(indices)
+  nariInstance.vertexBufferSize = VkDeviceSize(vBufSize)
+  nariInstance.indexCount = uint32(indices.len)
   var bufferCi =  VkBufferCreateInfo(
     sType: BufferCreateInfo,
     size: VkDeviceSize(vBufSize + iBufSize),
-    usage: VkBufferUsageFlags(
-      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT.uint32 or
-      VK_BUFFER_USAGE_INDEX_BUFFER_BIT.uint32)
-    # TODO: use {} operator or some better way to do it
+    usage: VkBufferUsageFlags{VertexBufferBit, IndexBufferBit}
   )
 
   var memReq = default(VkMemoryRequirements)
@@ -513,7 +504,7 @@ proc makeShaderDataBuffers(nariInstance) =
     var bufferCi = VkBufferCreateInfo(
       sType: BufferCreateInfo,
       size: VkDeviceSize(sizeof(ShaderData)),
-      usage: VkBufferUsageFlags(VkBufferUsageFlagBits.ShaderDeviceAddressBit)
+      usage: VkBufferUsageFlags{ShaderDeviceAddressBit}
     )
 
     if vkCreateBuffer(
@@ -1008,8 +999,199 @@ proc createPipeline(nariInstance) =
 
   info "graphics pipeline created"
 
+var lastWindowSize = ivec2(0, 0)
+var camDist = -8.0'f32
+var camRotation = vec2(0.0'f32, 0.0'f32)
+var keysDown = initHashSet[Key]()
+
+proc renderFrame(nariInstance; w, h: int) =
+  let fi = nariInstance.frameIndex
+
+  if vkWaitForFences(nariInstance.device, 1, nariInstance.fences[fi].addr, VkBool32(1), uint64.high) != VkSuccess:
+    quit("Waiting for fence failed")
+  if vkResetFences(nariInstance.device, 1, nariInstance.fences[fi].addr) != VkSuccess:
+    quit("Can't reset fence")
+
+  var imageIndex: uint32 = 0
+  let acquireResult = vkAcquireNextImageKHR(
+    nariInstance.device, nariInstance.swapchain, uint64.high,
+    nariInstance.presentSemaphores[fi], VkFence(0), imageIndex.addr)
+  if acquireResult != VkSuccess and acquireResult != VkSuboptimalKhr:
+    quit("Can't acquire next image")
+
+  var proj = perspective(45.0'f32, float32(w) / float32(h), 0.1'f32, 32.0'f32)
+  # remap opengl z [-1,1] to vulkan [0,1] (vmath uses opengl convention)
+  proj[2, 2] = proj[2, 2] * 0.5'f32 + proj[2, 3] * 0.5'f32
+  proj[3, 2] = proj[3, 2] * 0.5'f32 + proj[3, 3] * 0.5'f32
+  nariInstance.shaderData[fi].proj = proj
+  nariInstance.shaderData[fi].view = translate(vec3(0, 0, camDist)) * rotateX(camRotation.x) * rotateY(camRotation.y)
+  for i in 0..2:
+    let instancePos = vec3(float32(i - 1) * 3.0'f32, 0.0'f32, 0.0'f32)
+    nariInstance.shaderData[fi].model[i] = translate(instancePos)
+
+  copyMem(
+    nariInstance.shaderDataAllocs[fi].mappedPtr,
+    nariInstance.shaderData[fi].addr,
+    sizeof(ShaderData))
+
+  let cb = nariInstance.commandBuffers[fi]
+  if vkResetCommandBuffer(cb, VkCommandBufferResetFlags(0)) != VkSuccess:
+    quit("Can't reset command buffer")
+
+  var cbBI = VkCommandBufferBeginInfo(
+    sType: CommandBufferBeginInfo,
+    flags: VkCommandBufferUsageFlags{OneTimeSubmitBit})
+  if vkBeginCommandBuffer(cb, cbBI.addr) != VkSuccess:
+    quit("Can't begin command buffer")
+
+  var outputBarriers = [
+    VkImageMemoryBarrier2(
+      sType: ImageMemoryBarrier2,
+      srcStageMask: VkPipelineStageFlags2{ColorAttachmentOutputBit},
+      srcAccessMask: VkAccessFlags2{VkAccessFlagBits2.None},
+      dstStageMask: VkPipelineStageFlags2{ColorAttachmentOutputBit},
+      dstAccessMask: VkAccessFlags2{ColorAttachmentReadBit, ColorAttachmentWriteBit},
+      oldLayout: VK_IMAGE_LAYOUT_UNDEFINED,
+      newLayout: AttachmentOptimal,
+      image: nariInstance.swapchainImages[imageIndex],
+      subresourceRange: VkImageSubresourceRange(
+        aspectMask: VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+        levelCount: 1, layerCount: 1)
+    ),
+    VkImageMemoryBarrier2(
+      sType: ImageMemoryBarrier2,
+      srcStageMask: VkPipelineStageFlags2{LateFragmentTestsBit},
+      srcAccessMask: VkAccessFlags2{DepthStencilAttachmentWriteBit},
+      dstStageMask: VkPipelineStageFlags2{EarlyFragmentTestsBit},
+      dstAccessMask: VkAccessFlags2{DepthStencilAttachmentWriteBit},
+      oldLayout: VK_IMAGE_LAYOUT_UNDEFINED,
+      newLayout: AttachmentOptimal,
+      image: nariInstance.depthImage,
+      subresourceRange: VkImageSubresourceRange(
+        aspectMask: VkImageAspectFlags(
+          VK_IMAGE_ASPECT_DEPTH_BIT.uint32 or VK_IMAGE_ASPECT_STENCIL_BIT.uint32),
+        levelCount: 1, layerCount: 1)
+    )
+  ]
+  var barrierDependencyInfo = VkDependencyInfo(
+    sType: DependencyInfo,
+    imageMemoryBarrierCount: uint32(outputBarriers.len),
+    pImageMemoryBarriers: outputBarriers[0].addr)
+  vkCmdPipelineBarrier2(cb, barrierDependencyInfo.addr)
+
+  var colorAttachmentInfo = VkRenderingAttachmentInfo(
+    sType: RenderingAttachmentInfo,
+    imageView: nariInstance.swapchainImageViews[imageIndex],
+    imageLayout: AttachmentOptimal,
+    loadOp: Clear,
+    storeOp: Store,
+    clearValue: VkClearValue(color: VkClearColorValue(float32: [1.0'f32, 0.6'f32, 0.2'f32, 1.0'f32]))
+  )
+  var depthAttachmentInfo = VkRenderingAttachmentInfo(
+    sType: RenderingAttachmentInfo,
+    imageView: nariInstance.depthImageView,
+    imageLayout: AttachmentOptimal,
+    loadOp: Clear,
+    storeOp: DontCare,
+    clearValue: VkClearValue(depthStencil: VkClearDepthStencilValue(depth: 1.0'f32, stencil: 0))
+  )
+  var renderingInfo = VkRenderingInfo(
+    sType: RenderingInfo,
+    renderArea: VkRect2D(extent: VkExtent2D(width: w.uint32, height: h.uint32)),
+    layerCount: 1,
+    colorAttachmentCount: 1,
+    pColorAttachments: colorAttachmentInfo.addr,
+    pDepthAttachment: depthAttachmentInfo.addr)
+
+  vkCmdBeginRendering(cb, renderingInfo.addr)
+
+
+  var vp = VkViewport(
+    y: float32(h), width: float32(w), height: -float32(h),
+    minDepth: 0.0, maxDepth: 1.0)
+  vkCmdSetViewport(cb, 0, 1, vp.addr)
+  var scissor = VkRect2D(extent: VkExtent2D(width: w.uint32, height: h.uint32))
+  vkCmdSetScissor(cb, 0, 1, scissor.addr)
+  vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, nariInstance.pipeline)
+  vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, nariInstance.pipelineLayout,
+    0, 1, nariInstance.descriptorSetTex.addr, 0, nil)
+  var vOffset = VkDeviceSize(0)
+  vkCmdBindVertexBuffers(cb, 0, 1, nariInstance.vertexBuffer.addr, vOffset.addr)
+  vkCmdBindIndexBuffer(cb, nariInstance.vertexBuffer, nariInstance.vertexBufferSize, VK_INDEX_TYPE_UINT16)
+  vkCmdPushConstants(cb, nariInstance.pipelineLayout,
+    VkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT), 0,
+    uint32(sizeof(VkDeviceAddress)), nariInstance.shaderDataAddresses[fi].addr)
+  vkCmdDrawIndexed(cb, nariInstance.indexCount, 3, 0, 0, 0)
+
+
+  vkCmdEndRendering(cb)
+
+  var barrierPresent = VkImageMemoryBarrier2(
+    sType: ImageMemoryBarrier2,
+    srcStageMask: VkPipelineStageFlags2{ColorAttachmentOutputBit},
+    srcAccessMask: VkAccessFlags2{ColorAttachmentWriteBit},
+    dstStageMask: VkPipelineStageFlags2{ColorAttachmentOutputBit},
+    dstAccessMask: VkAccessFlags2{VkAccessFlagBits2.None},
+    oldLayout: AttachmentOptimal,
+    newLayout: PresentSrcKhr,
+    image: nariInstance.swapchainImages[imageIndex],
+    subresourceRange: VkImageSubresourceRange(
+      aspectMask: VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+      levelCount: 1, layerCount: 1)
+  )
+  var barrierPresentInfo = VkDependencyInfo(
+    sType: DependencyInfo,
+    imageMemoryBarrierCount: 1,
+    pImageMemoryBarriers: barrierPresent.addr)
+  vkCmdPipelineBarrier2(cb, barrierPresentInfo.addr)
+
+  if vkEndCommandBuffer(cb) != VkSuccess:
+    quit("Can't end command buffer")
+
+  var waitStage = VkPipelineStageFlags{ColorAttachmentOutputBit}
+  var submitInfo = VkSubmitInfo(
+    sType: SubmitInfo,
+    waitSemaphoreCount: 1,
+    pWaitSemaphores: nariInstance.presentSemaphores[fi].addr,
+    pWaitDstStageMask: waitStage.addr,
+    commandBufferCount: 1,
+    pCommandBuffers: cb.unsafeAddr,
+    signalSemaphoreCount: 1,
+    pSignalSemaphores: nariInstance.renderSemaphores[imageIndex].addr)
+  if vkQueueSubmit(nariInstance.queue, 1, submitInfo.addr, nariInstance.fences[fi]) != VkSuccess:
+    quit("Can't submit queue")
+
+  nariInstance.frameIndex = (fi + 1) mod uint32(maxFramesInFlight)
+
+  var presentInfo = VkPresentInfoKHR(
+    sType: PresentInfoKHR,
+    waitSemaphoreCount: 1,
+    pWaitSemaphores: nariInstance.renderSemaphores[imageIndex].addr,
+    swapchainCount: 1,
+    pSwapchains: nariInstance.swapchain.addr,
+    pImageIndices: imageIndex.addr)
+  discard vkQueuePresentKHR(nariInstance.queue, presentInfo.addr)
+
+proc cleanupSwapchainResources(nariInstance) =
+  discard vkDeviceWaitIdle(nariInstance.device)
+  vkDestroyImageView(nariInstance.device, nariInstance.depthImageView, nil)
+  vkDestroyImage(nariInstance.device, nariInstance.depthImage, nil)
+  vkDestroyBuffer(nariInstance.device, nariInstance.vertexBuffer, nil)
+  for i in 0..<maxFramesInFlight:
+    vkDestroyBuffer(nariInstance.device, nariInstance.shaderDataBuffers[i], nil)
+    nariInstance.allocator.free(nariInstance.shaderDataAllocs[i])
+    vkDestroyFence(nariInstance.device, nariInstance.fences[i], nil)
+    vkDestroySemaphore(nariInstance.device, nariInstance.presentSemaphores[i], nil)
+  for semaphore in nariInstance.renderSemaphores:
+    vkDestroySemaphore(nariInstance.device, semaphore, nil)
+  vkDestroyCommandPool(nariInstance.device, nariInstance.commandPool, nil)
+
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
+    if not e.initial and e.size == lastWindowSize: return
+    lastWindowSize = e.size
+    if not e.initial:
+      nari.cleanupSwapchainResources()
     nari.createSwapchain(e.size.x, e.size.y)
     nari.configureDepth(e.size.x, e.size.y)
     nari.makeBuffers()
@@ -1020,8 +1202,23 @@ run window, WindowEventsHandler(
       nari.loadTextures()
       nari.createPipeline()
   ,
+  onTick: proc(e: TickEvent) =
+    let dt = float32(e.deltaTime.inMicroseconds) / 1_000_000.0'f32
+    let speed = 2.0'f32
+    if Key.w in keysDown: camRotation.x -= speed * dt
+    if Key.s in keysDown: camRotation.x += speed * dt
+    if Key.a in keysDown: camRotation.y -= speed * dt
+    if Key.d in keysDown: camRotation.y += speed * dt,
   onRender: proc(e: RenderEvent) =
-    discard,
+    let sz = e.window.size
+    if sz.x > 0 and sz.y > 0:
+      nari.renderFrame(sz.x, sz.y)
+    redraw e.window
+  ,
+  onScroll: proc(e: ScrollEvent) =
+    camDist += float32(e.delta) * 0.5'f32,
   onKey: proc(e: KeyEvent) =
+    if e.pressed: keysDown.incl(e.key)
+    else: keysDown.excl(e.key)
     if e.pressed and e.key == Key.escape:
       close e.window)
