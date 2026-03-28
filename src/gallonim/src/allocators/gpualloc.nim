@@ -24,9 +24,12 @@ type
     linear*: bool = true
     ## true for buffers/linear textures, false for tiled textures.
     ## Used by Vulkan; other backends ignore.
+    deviceAddress*: bool = false
+    ## true if the buffer was created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT.
+    ## Used by Vulkan; other backends ignore.
 
   BackendAllocModel* = concept
-    proc allocateDeviceMemory(b: var Self, size: uint64, memTyp: uint32): pointer
+    proc allocateDeviceMemory(b: var Self, size: uint64, memTyp: uint32, deviceAddress: bool): pointer
     proc freeDeviceMemory(b: var Self, handle: pointer)
     proc findMemoryType(b: Self, typeBits: uint32, loc: MemoryLocation): int32
     proc mapMemory(b: var Self, handle: pointer, offset, size: uint64): pointer

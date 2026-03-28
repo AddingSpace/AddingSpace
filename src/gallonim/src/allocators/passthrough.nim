@@ -18,7 +18,7 @@ proc alloc*[B](a: var PassthroughGpuAllocator[B], desc: AllocDesc): Allocation =
   let memTyp = a.backend.findMemoryType(desc.memoryTypeBits, desc.location)
   assert memTyp >= 0, "No compatible memory type found"
 
-  let handle = a.backend.allocateDeviceMemory(desc.size, memTyp.uint32)
+  let handle = a.backend.allocateDeviceMemory(desc.size, memTyp.uint32, desc.deviceAddress)
   a.totalAllocated += desc.size
   inc a.numAllocs
 

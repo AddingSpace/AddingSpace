@@ -36,13 +36,18 @@ proc findMemoryType*(b: VulkanAllocModel, typeBits: uint32,
 
 proc allocateDeviceMemory*(
   b: var VulkanAllocModel, size: uint64,
-  memoryTypeIndex: uint32): pointer =
-  
+  memoryTypeIndex: uint32, deviceAddress: bool): pointer =
+
+  var allocFlagsInfo = VkMemoryAllocateFlagsInfo(
+    sType: VkStructureType.MemoryAllocateFlagsInfo,
+    flags: VkMemoryAllocateFlags{DeviceAddressBit})
+
   var allocCi = VkMemoryAllocateInfo(
     sType: VkStructureType.MemoryAllocateInfo,
+    pNext: if deviceAddress: allocFlagsInfo.addr else: nil,
     allocationSize: VkDeviceSize(size),
     memoryTypeIndex: memoryTypeIndex)
-  
+
   var memory = VkDeviceMemory(0)
   let res = vkAllocateMemory(b.device, allocCi.addr, nil, memory.addr)
   assert res == VkSuccess, "vkAllocateMemory failed: " & $res

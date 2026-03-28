@@ -7,7 +7,17 @@ import pkg/chronicles
 import pkg/vmath
 import pkg/gallonim
 
+const maxFramesInFlight {.define: "nari.maxFramesInFlight".} = 2
+
 type
+  # until render graph:
+  ShaderData = object
+    proj: Mat4
+    view: Mat4
+    model: array[3, Mat4]
+    lightPos: Vec4 = vec4(0, -10, 10, 0)
+    selected: uint32 = 1
+
   QueueFamilyIndices = object
     # maybe will be needed in future
     graphicsFamily: uint32
@@ -31,10 +41,17 @@ type
     swapchainImageViews: seq[VkImageView]
     allocator: PassthroughGpuAllocator[VulkanAllocModel] # TODO: implement freelist allocator etc.
 
+    commandBuffers: array[maxFramesInFlight, VkCommandBuffer]
+
     # Until render graph integration:
     depthImage: VkImage
     depthImageView: VkImageView
     vertexBuffer: VkBuffer
+    shaderDataBuffers: array[maxFramesInFlight, VkBuffer]
+    shaderDataAllocs: array[maxFramesInFlight, Allocation]
+    shaderDataAddresses: array[maxFramesInFlight, VkDeviceAddress]
+    shaderData: array[maxFramesInFlight, ShaderData]
+    # XXX: for render graph we need good way to define shader data, because this only for specific resource
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -466,11 +483,57 @@ proc makeBuffers(nariInstance) =
 
   info "vertex/index buffer created"
 
+proc makeShaderDataBuffers(nariInstance) =
+  for i in 0..<maxFramesInFlight:
+    var bufferCi = VkBufferCreateInfo(
+      sType: BufferCreateInfo,
+      size: VkDeviceSize(sizeof(ShaderData)),
+      usage: VkBufferUsageFlags(VkBufferUsageFlagBits.ShaderDeviceAddressBit)
+    )
+
+    if vkCreateBuffer(
+      nariInstance.device,
+      bufferCi.addr, nil,
+      nariInstance.shaderDataBuffers[i].addr
+    ) != VkSuccess: quit("Can't create shader data buffer")
+
+    var memReq = default(VkMemoryRequirements)
+    vkGetBufferMemoryRequirements(
+      nariInstance.device,
+      nariInstance.shaderDataBuffers[i],
+      memReq.addr
+    )
+
+    nariInstance.shaderDataAllocs[i] = nariInstance.allocator.alloc(AllocDesc(
+      size: memReq.size.uint64,
+      alignment: memReq.alignment.uint64,
+      memoryTypeBits: memReq.memoryTypeBits,
+      location: CpuToGpu,
+      linear: true,
+      deviceAddress: true,
+    ))
+
+    if vkBindBufferMemory(
+      nariInstance.device,
+      nariInstance.shaderDataBuffers[i],
+      cast[VkDeviceMemory](nariInstance.shaderDataAllocs[i].handle),
+      VkDeviceSize(nariInstance.shaderDataAllocs[i].offset)
+    ) != VkSuccess: quit("Can't bind shader data buffer memory")
+
+    var bdaInfo = VkBufferDeviceAddressInfo(
+      sType: VkStructureType.BufferDeviceAddressInfo,
+      buffer: nariInstance.shaderDataBuffers[i])
+    nariInstance.shaderDataAddresses[i] = vkGetBufferDeviceAddress(
+      nariInstance.device, bdaInfo.addr)
+
+  info "shader data buffers created"
+
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
     nari.createSwapchain(e.size.x, e.size.y)
     nari.configureDepth(e.size.x, e.size.y)
     nari.makeBuffers()
+    nari.makeShaderDataBuffers()
   ,
   onRender: proc(e: RenderEvent) =
     discard,
