@@ -69,6 +69,8 @@ type
     descriptorPool: VkDescriptorPool
     descriptorSetLayoutTex: VkDescriptorSetLayout
     descriptorSetTex: VkDescriptorSet
+    pipelineLayout: VkPipelineLayout
+    pipeline: VkPipeline
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -206,6 +208,7 @@ proc peekDevice(nariInstance) =
   const deviceExtensions = [cstring"VK_KHR_swapchain"]
   
   var enabledVk10Features = VkPhysicalDeviceFeatures(
+    shaderInt64: VkBool32(1),
     samplerAnisotropy: VkBool32(1))
   
   var enabledVk12Features = VkPhysicalDeviceVulkan12Features(
@@ -221,10 +224,15 @@ proc peekDevice(nariInstance) =
     pNext: enabledVk12Features.addr,
     synchronization2: VkBool32(1),
     dynamicRendering: VkBool32(1))
+
+  var enabledVk14Features = VkPhysicalDeviceVulkan14Features(
+    sType: PhysicalDeviceVulkan14Features,
+    pNext: enabledVk13Features.addr,
+    maintenance5: VkBool32(1))
   
   var deviceCI = VkDeviceCreateInfo(
     sType: DeviceCreateInfo,
-    pNext: enabledVk13Features.addr,
+    pNext: enabledVk14Features.addr,
     queueCreateInfoCount: 1,
     pQueueCreateInfos: queueCi.addr,
     enabledExtensionCount: deviceExtensions.len.uint32,
@@ -867,6 +875,139 @@ proc loadTextures(nariInstance) =
 
   info "textures loaded"
 
+proc createPipeline(nariInstance) =
+  let vertSpirv = readFile("src/shaders/shader.vert.spv")
+  let fragSpirv = readFile("src/shaders/shader.frag.spv")
+
+  var vertShaderModuleCI = VkShaderModuleCreateInfo(
+    sType: ShaderModuleCreateInfo,
+    codeSize: vertSpirv.len.uint,
+    pCode: cast[ptr uint32](vertSpirv[0].addr)
+  )
+  var fragShaderModuleCI = VkShaderModuleCreateInfo(
+    sType: ShaderModuleCreateInfo,
+    codeSize: fragSpirv.len.uint,
+    pCode: cast[ptr uint32](fragSpirv[0].addr)
+  )
+
+  var shaderStages = [
+    VkPipelineShaderStageCreateInfo(
+      sType: PipelineShaderStageCreateInfo,
+      pNext: vertShaderModuleCI.addr,
+      stage: VK_SHADER_STAGE_VERTEX_BIT,
+      pName: "main"
+    ),
+    VkPipelineShaderStageCreateInfo(
+      sType: PipelineShaderStageCreateInfo,
+      pNext: fragShaderModuleCI.addr,
+      stage: FragmentBit,
+      pName: "main"
+    )
+  ]
+
+  var pushConstantRange = VkPushConstantRange(
+    stageFlags: VkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT),
+    size: uint32(sizeof(VkDeviceAddress))
+  )
+  var pipelineLayoutCI = VkPipelineLayoutCreateInfo(
+    sType: PipelineLayoutCreateInfo,
+    setLayoutCount: 1,
+    pSetLayouts: nariInstance.descriptorSetLayoutTex.addr,
+    pushConstantRangeCount: 1,
+    pPushConstantRanges: pushConstantRange.addr
+  )
+  if vkCreatePipelineLayout(
+    nariInstance.device, pipelineLayoutCI.addr, nil,
+    nariInstance.pipelineLayout.addr
+  ) != VkSuccess: quit("Can't create pipeline layout")
+
+  var vertexBinding = VkVertexInputBindingDescription(
+    binding: 0,
+    stride: uint32(sizeof(Vertex)),
+    inputRate: VK_VERTEX_INPUT_RATE_VERTEX
+  )
+  var vertexAttributes = [
+    VkVertexInputAttributeDescription(location: 0, binding: 0, format: VK_FORMAT_R32G32B32_SFLOAT, offset: 0),
+    VkVertexInputAttributeDescription(location: 1, binding: 0, format: VK_FORMAT_R32G32B32_SFLOAT, offset: uint32(sizeof(Vec3))),
+    VkVertexInputAttributeDescription(location: 2, binding: 0, format: VK_FORMAT_R32G32_SFLOAT, offset: uint32(sizeof(Vec3) * 2))
+  ]
+  var vertexInputState = VkPipelineVertexInputStateCreateInfo(
+    sType: PipelineVertexInputStateCreateInfo,
+    vertexBindingDescriptionCount: 1,
+    pVertexBindingDescriptions: vertexBinding.addr,
+    vertexAttributeDescriptionCount: uint32(vertexAttributes.len),
+    pVertexAttributeDescriptions: vertexAttributes[0].addr
+  )
+  var inputAssemblyState = VkPipelineInputAssemblyStateCreateInfo(
+    sType: PipelineInputAssemblyStateCreateInfo,
+    topology: VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+  )
+  var viewportState = VkPipelineViewportStateCreateInfo(
+    sType: PipelineViewportStateCreateInfo,
+    viewportCount: 1,
+    scissorCount: 1
+  )
+  var dynamicStates = [Viewport, Scissor]
+  var dynamicState = VkPipelineDynamicStateCreateInfo(
+    sType: PipelineDynamicStateCreateInfo,
+    dynamicStateCount: uint32(dynamicStates.len),
+    pDynamicStates: dynamicStates[0].addr
+  )
+  var depthStencilState = VkPipelineDepthStencilStateCreateInfo(
+    sType: PipelineDepthStencilStateCreateInfo,
+    depthTestEnable: VkBool32(1),
+    depthWriteEnable: VkBool32(1),
+    depthCompareOp: VK_COMPARE_OP_LESS_OR_EQUAL
+  )
+
+  var imageFormat = VK_FORMAT_B8G8R8A8_SRGB
+  let depthFormat = findDepthFormat()
+  var renderingCI = VkPipelineRenderingCreateInfo(
+    sType: PipelineRenderingCreateInfo,
+    colorAttachmentCount: 1,
+    pColorAttachmentFormats: imageFormat.addr,
+    depthAttachmentFormat: depthFormat
+  )
+
+  var blendAttachment = VkPipelineColorBlendAttachmentState(
+    colorWriteMask: VkColorComponentFlags{RBit, GBit, BBit, ABit}
+  )
+  var colorBlendState = VkPipelineColorBlendStateCreateInfo(
+    sType: PipelineColorBlendStateCreateInfo,
+    attachmentCount: 1,
+    pAttachments: blendAttachment.addr
+  )
+  var rasterizationState = VkPipelineRasterizationStateCreateInfo(
+    sType: PipelineRasterizationStateCreateInfo,
+    lineWidth: 1.0
+  )
+  var multisampleState = VkPipelineMultisampleStateCreateInfo(
+    sType: PipelineMultisampleStateCreateInfo,
+    rasterizationSamples: VK_SAMPLE_COUNT_1_BIT
+  )
+
+  var pipelineCI = VkGraphicsPipelineCreateInfo(
+    sType: GraphicsPipelineCreateInfo,
+    pNext: renderingCI.addr,
+    stageCount: uint32(shaderStages.len),
+    pStages: shaderStages[0].addr,
+    pVertexInputState: vertexInputState.addr,
+    pInputAssemblyState: inputAssemblyState.addr,
+    pViewportState: viewportState.addr,
+    pRasterizationState: rasterizationState.addr,
+    pMultisampleState: multisampleState.addr,
+    pDepthStencilState: depthStencilState.addr,
+    pColorBlendState: colorBlendState.addr,
+    pDynamicState: dynamicState.addr,
+    layout: nariInstance.pipelineLayout
+  )
+  if vkCreateGraphicsPipelines(
+    nariInstance.device, VkPipelineCache(0), 1, pipelineCI.addr, nil,
+    nariInstance.pipeline.addr
+  ) != VkSuccess: quit("Can't create graphics pipeline")
+
+  info "graphics pipeline created"
+
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
     nari.createSwapchain(e.size.x, e.size.y)
@@ -877,6 +1018,7 @@ run window, WindowEventsHandler(
     nari.allocCommandBuffers()
     if e.initial:
       nari.loadTextures()
+      nari.createPipeline()
   ,
   onRender: proc(e: RenderEvent) =
     discard,
