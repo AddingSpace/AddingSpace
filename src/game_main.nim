@@ -52,6 +52,9 @@ type
     shaderDataAddresses: array[maxFramesInFlight, VkDeviceAddress]
     shaderData: array[maxFramesInFlight, ShaderData]
     # XXX: for render graph we need good way to define shader data, because this only for specific resource
+    fences: array[maxFramesInFlight, VkFence]
+    presentSemaphores: array[maxFramesInFlight, VkSemaphore]
+    renderSemaphores: seq[VkSemaphore]
 
 var siwinGlobals = newSiwinGlobals()
 vkPreload() # load vulkan
@@ -528,12 +531,39 @@ proc makeShaderDataBuffers(nariInstance) =
 
   info "shader data buffers created"
 
+proc createSemaphores(nariInstance) =
+  var semaphoreCi = VkSemaphoreCreateInfo(
+    sType: VkStructureType.SemaphoreCreateInfo)
+  var fenceCi = VkFenceCreateInfo(
+    sType: VkStructureType.FenceCreateInfo,
+    flags: VkFenceCreateFlags{SignaledBit})
+
+  for i in 0..<maxFramesInFlight:
+    if vkCreateFence(
+      nariInstance.device, fenceCi.addr, nil,
+      nariInstance.fences[i].addr
+    ) != VkSuccess: quit("Can't create fence")
+    if vkCreateSemaphore(
+      nariInstance.device, semaphoreCi.addr, nil,
+      nariInstance.presentSemaphores[i].addr
+    ) != VkSuccess: quit("Can't create present semaphore")
+
+  nariInstance.renderSemaphores.setLen(nariInstance.swapchainImages.len)
+  for semaphore in nariInstance.renderSemaphores.mitems:
+    if vkCreateSemaphore(
+      nariInstance.device, semaphoreCi.addr, nil,
+      semaphore.addr
+    ) != VkSuccess: quit("Can't create render semaphore")
+
+  info "semaphores and fences created"
+
 run window, WindowEventsHandler(
   onResize: proc(e: ResizeEvent) =
     nari.createSwapchain(e.size.x, e.size.y)
     nari.configureDepth(e.size.x, e.size.y)
     nari.makeBuffers()
     nari.makeShaderDataBuffers()
+    nari.createSemaphores()
   ,
   onRender: proc(e: RenderEvent) =
     discard,
