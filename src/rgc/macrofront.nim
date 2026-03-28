@@ -184,7 +184,7 @@ macro initGraph*(name: untyped) =
 
 when isMainModule:
   pass raster pub mypass:
-    input src {.sampled.}: Image[RGBA16F]
+    input src {.sampled.}: Image[RGBA16F, Fullscreen]
     output dst {.colorAttachment(1.0, 0.6, 0.2, 1.0).}: Image[RGBA16F]
     execute proc(cb: CommandBuffer) =
       discard

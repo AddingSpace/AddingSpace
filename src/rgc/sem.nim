@@ -150,14 +150,7 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
       inc n
       if n.stmtKind == UsageS: c.dest.takeTree(n) # (usage
       else: c.take n # .
-      let typId = getOrGenType(
-        c.typeTable,
-        c.typeRegistry,
-        n,
-        c.dest)
-      c.dest.takeTree(n) # add type to dest
-                         # XXX: it shouldn't be realy used but in other
-                         # case there are error
+      let typId = getOrGenType(c.typeTable, c.typeRegistry, n, c.dest)
       c.resourceTypes[sym] = typId
 
     of GraphGeneration:
@@ -177,15 +170,7 @@ proc semStmt*(c: var SemContext, n: var Cursor) =
       inc n
       if n.stmtKind == UsageS: c.dest.takeTree(n) # (usage
       else: c.take n # .
-
-      let typId = getOrGenType(
-        c.typeTable,
-        c.typeRegistry,
-        n,
-        c.dest)
-      c.dest.takeTree(n) # add type to dest
-                         # XXX: it shouldn't be realy used but in other
-                         # case there are error
+      let typId = getOrGenType(c.typeTable, c.typeRegistry, n, c.dest)
       c.resourceTypes[sym] = typId
 
     of GraphGeneration:
