@@ -11,10 +11,8 @@ type
 
   IrBuilder = object
     dest: Builder
-    passType: string
-    scopeDepth: int
 
-proc parseSignature(b: var Builder, n: NimNode) =
+proc parseSignature(b: var Builder, n: NimNode, passType: var string) =
   var modifiers: set[Modifier] = {}
   var node = n
   while node.kind == nnkCommand:
@@ -26,6 +24,15 @@ proc parseSignature(b: var Builder, n: NimNode) =
     of "pub":
       if Pub in modifiers: raiseAssert "Duplicate `pub`"
       modifiers.incl Pub
+    of "raster":
+      if passType.len > 0: raiseAssert "Duplicate pass type"
+      passType = "render"
+    of "compute":
+      if passType.len > 0: raiseAssert "Duplicate pass type"
+      passType = "compute"
+    of "copy":
+      if passType.len > 0: raiseAssert "Duplicate pass type"
+      passType = "copy"
     else:
       raiseAssert "Unknown modifier: " & node[0].strVal
     node = node[1]
@@ -97,7 +104,6 @@ proc parseCommand(b: var IrBuilder, n: NimNode) =
   assert n.kind == nnkCommand
   case n[0].strVal
   of "input", "output":
-    assert b.scopeDepth == 0
     b.dest.withTree n[0].strVal:
       var nameNode = n[1]
       if nameNode.kind == nnkPragmaExpr:
@@ -116,57 +122,38 @@ proc parseCommand(b: var IrBuilder, n: NimNode) =
       assert s.kind == nnkStmtList
       assert s.len == 1
       b.dest.emitType s[0]
-  of "shader":
-    assert b.scopeDepth > 0
-    b.dest.withTree "shader":
-      b.dest.addIdent "fragment"
-      b.dest.addIdent n[1].strVal
+  of "execute":
+    discard # not implemented
   of "use":
-    assert b.scopeDepth == 0
     b.dest.withTree "use":
       b.dest.addIdent n[1].strVal
   of "connect":
-    assert b.scopeDepth == 0
     b.dest.withTree "connect":
       b.dest.emitResourceRef n[1]
       b.dest.emitResourceRef n[2]
   else: raiseAssert "Invalid command"
 
-proc parseStmt(b: var IrBuilder, n: NimNode)
-
-proc parseCall(b: var IrBuilder, n: NimNode) =
-  assert n.kind == nnkCall
-  case n[0].strVal
-  of "raster":
-    inc b.scopeDepth
-    b.passType = "render"
-    for i in n[1]: parseStmt(b, i)
-    dec b.scopeDepth
-  else: discard
-
 proc parseStmt(b: var IrBuilder, n: NimNode) =
   case n.kind
   of nnkCommand: parseCommand(b, n)
-  of nnkCall: parseCall(b, n)
   else: discard
 
 proc passOrModule*(signature: NimNode, code: NimNode, node: string) =
   var b = openBuilder()
-  
+  var passType = ""
+
   b.withTree node:
-    b.parseSignature(signature)
+    b.parseSignature(signature, passType)
     var stmts = IrBuilder(dest: openBuilder())
 
     stmts.dest.withTree "stmts":
       for i in code:
         parseStmt(stmts, i)
 
-    if stmts.passType.len == 0: b.addEmpty()
-    else: b.addIdent stmts.passType
+    if passType.len == 0: b.addEmpty()
+    else: b.addIdent passType
     b.addBuilder(stmts.dest)
 
-  # echo b.extract()
-  # echo treeRepr(code)
   mcRgirCode.add newStrLitNode(b.extract())
 
 macro pass*(signature: untyped, code: untyped) =
@@ -196,12 +183,11 @@ macro initGraph*(name: untyped) =
 
 
 when isMainModule:
-  pass pub mypass:
+  pass raster pub mypass:
     input src {.sampled.}: Image[RGBA16F]
     output dst {.colorAttachment(1.0, 0.6, 0.2, 1.0).}: Image[RGBA16F]
-
-    raster:
-      shader lightingShader
+    execute proc(cb: CommandBuffer) =
+      discard
 
   module myModule:
     output result {.colorAttachment.}: Image[RGBA16F]
