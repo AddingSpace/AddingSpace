@@ -1,4 +1,4 @@
-requires "https://github.com/planetis-m/vulkan#07669e9""
+requires "https://github.com/planetis-m/vulkan#07669e9"
 
 requires "siwin"
 
