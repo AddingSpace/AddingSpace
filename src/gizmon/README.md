@@ -1,4 +1,4 @@
-Games need gizmos because it because it simplifies debugging.
+Games need gizmos because it simplifies debugging.
 Without it, debugging various vectors turns into hell, however this requires a gizmos system more complex than a basic one (i.e. gizmos in the form of editor tools like a rotation gizmo, position gizmo, scale gizmo), this is how various game engines do it, for example Godot. Essentially, a gizmo system is described here that should be both simple and suitable for debugging tasks.
 Aproximate api:
 ```nim
