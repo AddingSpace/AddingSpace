@@ -21,12 +21,13 @@ type
     # BECAUSE I WANT RENDER DIFFERENT CUSTOM SHAPES FOR GIZMO (CONE for move gizmo, LAMP 3d model for lights, ue like CAMERA 3d model)
     shape0: Vec4 # normal.xyz, radius; allow us drawing `Disc` and `Plane`
 
-    shape1: Vec4 # dir.xy, reserved, reserved; allow us drawing `Line`
-                 # If in future it will require more slots, we can change pos.xy, dir.xy into polar system (angle, a, b) i.e we have one slot
+    shape1: Vec4 # dir.xy, pos.xy; allow us drawing `Line`
 
     color0: Vec4 # color.rgb, thickness
 
-    meta0: UVec4 # kind, tip, clipped, reserved; clipped can be replaced by radius <= 0.0 check
+    meta0: UVec3 # kind, tip, clipped, reserved; clipped can be replaced by radius <= 0.0 check
+    
+    posZ: float32
 
   GizmoDrawer* = object
     # TODO: maybe add generic specialization for 2d games??
@@ -47,18 +48,21 @@ proc init(
   radius: float32,
   thickness: float32,
   dir: Vec2,
-  color: Vec3): GizmoRenderCmd =
+  color: Vec3,
+  objectPos: Vec3): GizmoRenderCmd =
 
   GizmoRenderCmd(
     shape0: vec4(planeNormal, radius),
-    shape1: vec4(dir, vec2(0, 0)),
+    shape1: vec4(dir, objectPos.xy),
     color0: vec4(color, thickness),
-    meta0: uvec4(uint8(kind), uint8(tip), uint8(radius <= 0.0), 0))
+    meta0: uvec3(uint8(kind), uint8(tip), uint8(radius <= 0.0)),
+    posZ: objectPos.z)
 
 proc `$`(cmd: GizmoRenderCmd): string =
   result = "GizmoRenderCmd(\n"
-  result.add "  kind: " & $GizmoRenderCmdKind(cmd.meta0.x) & '\n'
+  result.add "  kind:  " & $GizmoRenderCmdKind(cmd.meta0.x) & '\n'
   result.add "  planeNormal:  " & $cmd.shape0.xy & '\n'
+  result.add "  objectPos:  " & $vec3(cmd.shape1.zw, cmd.posZ) & '\n'
   result.add "  radius:  " & $cmd.shape0.zw & '\n'
   result.add "  tip:  " & $GizmoTip(cmd.meta0.y) & '\n'
   result.add "  clipped:  " & $bool(cmd.meta0.z) & '\n'
@@ -106,7 +110,8 @@ proc disc*(
     radius = plane.currentRadius,
     thickness = drawer.thickness,
     dir = vec2(0, 0), # don't care
-    color = color)
+    color = color,
+    objectPos = drawer.objectPos)
 
 proc ring*(
     drawer: var GizmoDrawer;
@@ -119,7 +124,8 @@ proc ring*(
     radius = plane.currentRadius,
     thickness = drawer.thickness,
     dir = vec2(0, 0), # don't care
-    color = color)
+    color = color,
+    objectPos = drawer.objectPos)
 
 proc axis*(
     drawer: var GizmoDrawer;
@@ -137,7 +143,8 @@ proc axis*(
     radius = plane.currentRadius,
     thickness = drawer.thickness,
     dir = dir, # don't care
-    color = color)
+    color = color,
+    objectPos = drawer.objectPos)
 
 when isMainModule:
   var gizmoDrawer = GizmoDrawer.init()
