@@ -43,3 +43,9 @@ proc joinPosixPath*(head, tail: string): string =
   var state = 0
   joinPosixPathImpl(result, state, head)
   joinPosixPathImpl(result, state, tail)
+
+proc resolvePosixPath*(base, path: string): string =
+  joinPosixPath(
+    if path.len > 0 and path[0] == '/': ""
+    else: base
+  , path)
